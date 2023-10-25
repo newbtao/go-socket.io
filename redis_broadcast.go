@@ -200,23 +200,23 @@ func (bc *redisBroadcast) LeaveAll(connection Conn) {
 // Clear clears the room.
 func (bc *redisBroadcast) Clear(room string) {
 	bc.lock.Lock()
-	defer bc.lock.Unlock()
 
 	delete(bc.rooms, room)
+	bc.lock.Unlock()
+
 	go bc.publishClear(room)
 }
 
 // Send sends given event & args to all the connections in the specified room.
 func (bc *redisBroadcast) Send(room, event string, args ...interface{}) {
 	bc.lock.RLock()
-	defer bc.lock.RUnlock()
-
 	connections, ok := bc.rooms[room]
 	if ok {
 		for _, connection := range connections {
 			connection.Emit(event, args...)
 		}
 	}
+	bc.lock.RUnlock()
 
 	bc.publishMessage(room, event, args...)
 }
@@ -224,13 +224,14 @@ func (bc *redisBroadcast) Send(room, event string, args ...interface{}) {
 // SendAll sends given event & args to all the connections to all the rooms.
 func (bc *redisBroadcast) SendAll(event string, args ...interface{}) {
 	bc.lock.RLock()
-	defer bc.lock.RUnlock()
 
 	for _, connections := range bc.rooms {
 		for _, connection := range connections {
 			connection.Emit(event, args...)
 		}
 	}
+	bc.lock.RUnlock()
+
 	bc.publishMessage("", event, args...)
 }
 
@@ -287,14 +288,15 @@ func (bc *redisBroadcast) Len(room string) int {
 // no connection is given, in case of a connection is given, it gives
 // list of all the rooms the connection is joined to.
 func (bc *redisBroadcast) Rooms(connection Conn) []string {
-	bc.lock.RLock()
-	defer bc.lock.RUnlock()
 
 	if connection == nil {
 		return bc.AllRooms()
+	} else {
+		bc.lock.RLock()
+		conns := bc.getRoomsByConn(connection)
+		bc.lock.RUnlock()
+		return conns
 	}
-
-	return bc.getRoomsByConn(connection)
 }
 
 func (bc *redisBroadcast) onMessage(channel string, msg []byte) error {
