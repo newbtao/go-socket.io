@@ -90,6 +90,7 @@ func newRedisBroadcast(nsp string, opts *RedisAdapterOptions) (*redisBroadcast, 
 
 	pub, err := redis.Dial(opts.Network, addr, redisOpts...)
 	if err != nil {
+		fmt.Printf("[socketio]redis broadcast fail， please check %s", err)
 		return nil, err
 	}
 
@@ -499,6 +500,7 @@ func (bc *redisBroadcast) publishMessage(room string, event string, args ...inte
 
 	_, err = bc.pub.Conn.Do("PUBLISH", bc.key, bcMessageJSON)
 	if err != nil {
+		fmt.Printf("[socketio]redis broadcast fail， please check %s", err)
 		return
 	}
 }
