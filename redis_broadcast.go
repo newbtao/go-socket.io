@@ -21,6 +21,7 @@ type redisBroadcast struct {
 	key        string
 	reqChannel string
 	resChannel string
+	opts       *RedisAdapterOptions
 
 	requests map[string]interface{}
 
@@ -90,7 +91,7 @@ func newRedisBroadcast(nsp string, opts *RedisAdapterOptions) (*redisBroadcast, 
 
 	pub, err := redis.Dial(opts.Network, addr, redisOpts...)
 	if err != nil {
-		fmt.Printf("[socketio]redis broadcast fail， please check %s", err)
+		fmt.Printf("[socketio]redis broadcast fail， please check %s \n", err)
 		return nil, err
 	}
 
@@ -117,6 +118,7 @@ func newRedisBroadcast(nsp string, opts *RedisAdapterOptions) (*redisBroadcast, 
 		resChannel: fmt.Sprintf("%s-response#%s", opts.Prefix, nsp),
 		nsp:        nsp,
 		uid:        uid,
+		opts:       opts,
 	}
 
 	if err = subConn.Subscribe(rbc.reqChannel, rbc.resChannel); err != nil {
@@ -126,6 +128,22 @@ func newRedisBroadcast(nsp string, opts *RedisAdapterOptions) (*redisBroadcast, 
 	go rbc.dispatch()
 
 	return rbc, nil
+}
+
+func (bc *redisBroadcast) newRedisConn(opts *RedisAdapterOptions) (redis.Conn, error) {
+	bc.lock.Lock()
+	defer bc.lock.Unlock()
+
+	addr := opts.getAddr()
+	var redisOpts []redis.DialOption
+	if len(opts.Password) > 0 {
+		redisOpts = append(redisOpts, redis.DialPassword(opts.Password))
+	}
+	if opts.DB > 0 {
+		redisOpts = append(redisOpts, redis.DialDatabase(opts.DB))
+	}
+
+	return redis.Dial(opts.Network, addr, redisOpts...)
 }
 
 // AllRooms gives list of all rooms available for redisBroadcast.
@@ -331,6 +349,7 @@ func (bc *redisBroadcast) onMessage(channel string, msg []byte) error {
 		return errors.New("invalid event")
 	}
 
+	fmt.Println(args)
 	if room != "" {
 		bc.send(room, event, args...)
 	} else {
@@ -500,8 +519,17 @@ func (bc *redisBroadcast) publishMessage(room string, event string, args ...inte
 
 	_, err = bc.pub.Conn.Do("PUBLISH", bc.key, bcMessageJSON)
 	if err != nil {
-		fmt.Printf("[socketio]redis broadcast fail， please check %s", err)
-		return
+		fmt.Printf("[socketio]Redis broadcast fail， try reconnect %s \n", err)
+		_ = bc.pub.Conn.Close()
+		conn, err := bc.newRedisConn(bc.opts)
+		if err != nil {
+			fmt.Printf("[socketio]Create new connection fail， %s \n", err)
+		}
+		bc.pub.Conn = conn
+		_, err = bc.pub.Conn.Do("PUBLISH", bc.key, bcMessageJSON)
+		if err != nil {
+			fmt.Printf("[socketio]Redis broadcast fail again， please check %s \n", err)
+		}
 	}
 }
 
@@ -563,7 +591,21 @@ func (bc *redisBroadcast) dispatch() {
 			}
 
 		case error:
-			return
+			//return
+			fmt.Printf("receive message error, try reconnect %v \n", m)
+			_ = bc.sub.Conn.Close()
+			conn, err := bc.newRedisConn(bc.opts)
+			if err != nil {
+				fmt.Printf("[socketio]Create new connection fail， %s \n", err)
+			}
+			bc.sub.Conn = conn
+			if err = bc.sub.PSubscribe(fmt.Sprintf("%s#%s#*", bc.opts.Prefix, bc.nsp)); err != nil {
+				//fmt.Printf("[socketio]Create new connection fail， %s \n", err)
+			}
+			if err = bc.sub.Subscribe(bc.reqChannel, bc.resChannel); err != nil {
+				//fmt.Printf("[socketio]Create new connection fail， %s \n", err)
+			}
+
 		}
 	}
 }
