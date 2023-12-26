@@ -349,7 +349,6 @@ func (bc *redisBroadcast) onMessage(channel string, msg []byte) error {
 		return errors.New("invalid event")
 	}
 
-	fmt.Println(args)
 	if room != "" {
 		bc.send(room, event, args...)
 	} else {
